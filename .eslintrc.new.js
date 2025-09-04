@@ -1,3 +1,4 @@
+// Use the old .eslintrc.js format for now since the new flat config has issues with TypeScript
 module.exports = {
   extends: ['expo'],
   ignorePatterns: [
@@ -19,7 +20,6 @@ module.exports = {
     'no-var': 'error',
     '@typescript-eslint/no-unused-vars': 'warn',
     '@typescript-eslint/no-explicit-any': 'warn',
-    'import/first': 'off',
   },
   env: {
     node: true,
