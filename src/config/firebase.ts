@@ -1,8 +1,9 @@
 // Firebase configuration for LockerRoom MVP
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { initializeAuth, getReactNativePersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Firebase configuration from environment variables
 const firebaseConfig = {
@@ -30,6 +31,9 @@ if (missingKeys.length > 0) {
   throw new Error(`Missing Firebase configuration: ${missingKeys.join(", ")}`);
 }
 
+// Debug logging
+console.log("[Firebase Config] Project ID:", process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID);
+
 // Initialize Firebase app
 let app;
 if (getApps().length === 0) {
@@ -38,8 +42,21 @@ if (getApps().length === 0) {
   app = getApp();
 }
 
-// Initialize Firebase Auth
-const auth = getAuth(app);
+// Initialize Firebase Auth with AsyncStorage persistence
+let auth;
+try {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage)
+  });
+} catch (error: any) {
+  // If already initialized, get the existing instance
+  if (error.code === 'auth/already-initialized') {
+    const { getAuth } = require('firebase/auth');
+    auth = getAuth(app);
+  } else {
+    throw error;
+  }
+}
 
 // Initialize Firestore
 const db = getFirestore(app);

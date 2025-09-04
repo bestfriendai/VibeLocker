@@ -9,7 +9,9 @@ import { Ionicons } from "@expo/vector-icons";
 import AnimatedButton from "./AnimatedButton";
 import AnimatedInput from "./AnimatedInput";
 import LoadingSpinner from "./LoadingSpinner";
-import { firebaseAuth, firebaseUsers, firebaseFirestore, firebaseReviews } from "../services/firebase";
+import { firebaseAuth, firebaseUsers, firebaseReviews } from "../services/firebase";
+import { auth, db } from "../config/firebase";
+import { doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs } from "firebase/firestore";
 import useAuthStore from "../state/authStore";
 import useReviewsStore from "../state/reviewsStore";
 import type { GreenFlag, RedFlag } from "../types";
@@ -31,9 +33,12 @@ export default function FirebaseExample() {
   const testFirebaseAuth = async () => {
     setIsLoading(true);
     try {
+      // Use unique email to avoid conflicts
+      const testEmail = `test_${Date.now()}@example.com`;
+
       // Test sign up
       addTestResult("Testing Firebase Auth Sign Up...");
-      const firebaseUser = await firebaseAuth.signUp(email, password, displayName);
+      const firebaseUser = await firebaseAuth.signUp(testEmail, password, displayName);
       addTestResult(`✅ Sign up successful: ${firebaseUser.email}`);
 
       // Test sign out
@@ -43,48 +48,76 @@ export default function FirebaseExample() {
 
       // Test sign in
       addTestResult("Testing Firebase Auth Sign In...");
-      const signInUser = await firebaseAuth.signIn(email, password);
+      const signInUser = await firebaseAuth.signIn(testEmail, password);
       addTestResult(`✅ Sign in successful: ${signInUser.email}`);
 
     } catch (error) {
-      addTestResult(`❌ Auth test failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+      if (error instanceof Error && error.message.includes("email-already-in-use")) {
+        // If email exists, try to sign in instead
+        try {
+          addTestResult("Email exists, testing sign in...");
+          const signInUser = await firebaseAuth.signIn(email, password);
+          addTestResult(`✅ Sign in successful: ${signInUser.email}`);
+        } catch (signInError) {
+          addTestResult(`❌ Auth test failed: ${signInError instanceof Error ? signInError.message : "Unknown error"}`);
+        }
+      } else {
+        addTestResult(`❌ Auth test failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+      }
     }
     setIsLoading(false);
   };
 
   const testFirestoreOperations = async () => {
+    if (!auth.currentUser) {
+      addTestResult("❌ No authenticated user for Firestore test");
+      return;
+    }
+
     setIsLoading(true);
     try {
-      // Test create document
+      const userId = auth.currentUser.uid;
+      const testDocId = `test_${Date.now()}`;
+
+      // Test create document in test collection (allowed by security rules)
       addTestResult("Testing Firestore Create Document...");
-      await firebaseFirestore.createDocument("test", "doc1", {
+      const testDocRef = doc(db, "test", testDocId);
+      await setDoc(testDocRef, {
         name: "Test Document",
         value: 42,
-        active: true
+        active: true,
+        userId: userId,
+        createdAt: new Date()
       });
       addTestResult("✅ Document created successfully");
 
       // Test get document
       addTestResult("Testing Firestore Get Document...");
-      const doc = await firebaseFirestore.getDocument("test", "doc1");
-      addTestResult(`✅ Document retrieved: ${JSON.stringify(doc)}`);
+      const docSnap = await getDoc(testDocRef);
+      if (docSnap.exists()) {
+        addTestResult(`✅ Document retrieved: ${JSON.stringify(docSnap.data())}`);
+      } else {
+        addTestResult("❌ Document not found");
+      }
 
       // Test update document
       addTestResult("Testing Firestore Update Document...");
-      await firebaseFirestore.updateDocument("test", "doc1", {
+      await updateDoc(testDocRef, {
         value: 100,
-        updated: true
+        updated: true,
+        updatedAt: new Date()
       });
       addTestResult("✅ Document updated successfully");
 
       // Test get collection
       addTestResult("Testing Firestore Get Collection...");
-      const collection = await firebaseFirestore.getCollection("test");
-      addTestResult(`✅ Collection retrieved: ${collection.length} documents`);
+      const testCollectionRef = collection(db, "test");
+      const querySnapshot = await getDocs(testCollectionRef);
+      addTestResult(`✅ Collection retrieved: ${querySnapshot.size} documents`);
 
       // Test delete document
       addTestResult("Testing Firestore Delete Document...");
-      await firebaseFirestore.deleteDocument("test", "doc1");
+      await deleteDoc(testDocRef);
       addTestResult("✅ Document deleted successfully");
 
     } catch (error) {
@@ -94,17 +127,21 @@ export default function FirebaseExample() {
   };
 
   const testUserProfile = async () => {
-    if (!user) {
+    if (!auth.currentUser) {
       addTestResult("❌ No authenticated user for profile test");
       return;
     }
 
     setIsLoading(true);
     try {
+      const userId = auth.currentUser.uid;
+      const userEmail = auth.currentUser.email || "test@example.com";
+
       // Test create user profile
       addTestResult("Testing User Profile Creation...");
-      await firebaseUsers.createUserProfile(user.id, {
-        email: user.email,
+      await firebaseUsers.createUserProfile(userId, {
+        id: userId,
+        email: userEmail,
         anonymousId: `anon_${Date.now()}`,
         location: { city: "Test City", state: "TS" },
         genderPreference: "all"
@@ -113,12 +150,12 @@ export default function FirebaseExample() {
 
       // Test get user profile
       addTestResult("Testing Get User Profile...");
-      const profile = await firebaseUsers.getUserProfile(user.id);
+      const profile = await firebaseUsers.getUserProfile(userId);
       addTestResult(`✅ Profile retrieved: ${profile?.email}`);
 
       // Test update user profile
       addTestResult("Testing Update User Profile...");
-      await firebaseUsers.updateUserProfile(user.id, {
+      await firebaseUsers.updateUserProfile(userId, {
         location: { city: "Updated City", state: "UC" }
       });
       addTestResult("✅ User profile updated successfully");
@@ -130,11 +167,17 @@ export default function FirebaseExample() {
   };
 
   const testReviews = async () => {
+    if (!auth.currentUser) {
+      addTestResult("❌ No authenticated user for reviews test");
+      return;
+    }
+
     setIsLoading(true);
     try {
       // Test create review
       addTestResult("Testing Review Creation...");
       const reviewData = {
+        authorId: auth.currentUser.uid,
         reviewerAnonymousId: `anon_${Date.now()}`,
         reviewedPersonName: "Test Person",
         reviewedPersonLocation: { city: "Test City", state: "TS" },
@@ -156,14 +199,18 @@ export default function FirebaseExample() {
       const { reviews: fetchedReviews } = await firebaseReviews.getReviews(5);
       addTestResult(`✅ Reviews retrieved: ${fetchedReviews.length} reviews`);
 
-      // Test update review (like)
+      // Test update review (like) - Note: Only likeCount updates are allowed by security rules
       if (fetchedReviews.length > 0) {
         addTestResult("Testing Review Update (Like)...");
         const firstReview = fetchedReviews[0];
-        await firebaseReviews.updateReview(firstReview.id, {
-          likeCount: firstReview.likeCount + 1
-        });
-        addTestResult("✅ Review liked successfully");
+        try {
+          await firebaseReviews.updateReview(firstReview.id, {
+            likeCount: firstReview.likeCount + 1
+          });
+          addTestResult("✅ Review liked successfully");
+        } catch (updateError) {
+          addTestResult(`⚠️ Review update limited by security rules (expected): ${updateError instanceof Error ? updateError.message : "Unknown error"}`);
+        }
       }
 
     } catch (error) {
@@ -280,21 +327,21 @@ export default function FirebaseExample() {
               title="Test Firestore Operations"
               variant="secondary"
               onPress={testFirestoreOperations}
-              disabled={isLoading}
+              disabled={isLoading || !auth.currentUser}
             />
-            
+
             <AnimatedButton
               title="Test User Profile"
               variant="secondary"
               onPress={testUserProfile}
-              disabled={isLoading || !isAuthenticated}
+              disabled={isLoading || !auth.currentUser}
             />
-            
+
             <AnimatedButton
               title="Test Reviews"
               variant="secondary"
               onPress={testReviews}
-              disabled={isLoading}
+              disabled={isLoading || !auth.currentUser}
             />
           </View>
         </View>
